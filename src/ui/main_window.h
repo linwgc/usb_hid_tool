@@ -45,6 +45,8 @@ private:
     bool readMacAddress(QString &macString, QString &errMsg);
     bool appendCsvRecord(const QString &mac, const QString &serial, const QString &result, QString &errMsg);
     bool isDuplicateRecord(const QString &mac, const QString &serial) const;
+    bool printSerialLabel(const QString &serial, const QString &mac, QString &errMsg);
+    QString buildPrintTemplate(const QString &serial, const QString &mac) const;
     QString currentLogFilePath() const;
     QString currentCsvFilePath() const;
 
@@ -71,11 +73,15 @@ private:
     QCheckBox *useMonthCheck_ = nullptr;
     QCheckBox *useYearCheck_ = nullptr;
     QCheckBox *preventDuplicateCheck_ = nullptr;
+    QCheckBox *enablePrintCheck_ = nullptr;
     QComboBox *plantCombo_ = nullptr;
     QComboBox *manufacturerCombo_ = nullptr;
     QComboBox *productCombo_ = nullptr;
     QComboBox *monthCombo_ = nullptr;
     QComboBox *yearCombo_ = nullptr;
+    QLineEdit *printerIpEdit_ = nullptr;
+    QLineEdit *printerPortEdit_ = nullptr;
+    QPlainTextEdit *printTemplateEdit_ = nullptr;
     QTextEdit *logEdit_ = nullptr;
 
     quint64 nextSerial_ = 1;

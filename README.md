@@ -16,6 +16,7 @@ PC tool for `speaker_ref_design` to send/receive RACE CMD over USB HID.
   - Production flow: read MAC -> write serial -> append MAC/SN record to CSV.
   - Write-success check: validate RACE response `0x5B`, command ID match, status `0x00`.
   - Duplicate protection: block write when same MAC or serial exists in historical successful records.
+  - Optional label print after write success (TCP printer, default ZPL over `9100`).
   - Build RACE command from template and write to DUT.
   - Reserved extension for barcode-printer integration.
 

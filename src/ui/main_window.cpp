@@ -23,6 +23,7 @@
 #include <QTabWidget>
 #include <QTextEdit>
 #include <QTextStream>
+#include <QTcpSocket>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -109,12 +110,14 @@ void MainWindow::setupUi()
     useMonthCheck_ = new QCheckBox("Enable Month", snPage);
     useYearCheck_ = new QCheckBox("Enable Year", snPage);
     preventDuplicateCheck_ = new QCheckBox("Prevent duplicate burning (check CSV history)", snPage);
+    enablePrintCheck_ = new QCheckBox("Print label after successful write", snPage);
     usePlantCheck_->setChecked(true);
     useManufacturerCheck_->setChecked(true);
     useProductCheck_->setChecked(true);
     useMonthCheck_->setChecked(true);
     useYearCheck_->setChecked(true);
     preventDuplicateCheck_->setChecked(true);
+    enablePrintCheck_->setChecked(false);
 
     plantCombo_ = new QComboBox(snPage);
     plantCombo_->addItem("HZ - HuiZhou", "HZ");
@@ -159,6 +162,12 @@ void MainWindow::setupUi()
     yearCombo_->addItem("E - 2029", "E");
     yearCombo_->addItem("F - 2030", "F");
 
+    printerIpEdit_ = new QLineEdit("192.168.1.100", snPage);
+    printerPortEdit_ = new QLineEdit("9100", snPage);
+    printTemplateEdit_ = new QPlainTextEdit(snPage);
+    printTemplateEdit_->setPlaceholderText("^XA\n^FO30,30^A0N,40,40^FD{SERIAL}^FS\n^FO30,90^BY2\n^BCN,80,Y,N,N^FD{SERIAL}^FS\n^FO30,190^A0N,28,28^FDMAC:{MAC}^FS\n^XZ");
+    printTemplateEdit_->setPlainText("^XA\n^FO30,30^A0N,40,40^FD{SERIAL}^FS\n^FO30,90^BY2\n^BCN,80,Y,N,N^FD{SERIAL}^FS\n^FO30,190^A0N,28,28^FDMAC:{MAC}^FS\n^XZ");
+
     snLayout->addRow("SN Prefix", snPrefixEdit_);
     snLayout->addRow(usePlantCheck_, plantCombo_);
     snLayout->addRow(useManufacturerCheck_, manufacturerCombo_);
@@ -169,6 +178,10 @@ void MainWindow::setupUi()
     snLayout->addRow(useYearCheck_, yearCombo_);
     snLayout->addRow("Auto Poll ms", snPollMsEdit_);
     snLayout->addRow(preventDuplicateCheck_);
+    snLayout->addRow(enablePrintCheck_);
+    snLayout->addRow("Printer IP", printerIpEdit_);
+    snLayout->addRow("Printer Port", printerPortEdit_);
+    snLayout->addRow("Print Template (ZPL)", printTemplateEdit_);
     snLayout->addRow("RACE Template ({SERIAL_ASCII})", snTemplateEdit_);
 
     auto *manualBtnLayout = new QHBoxLayout();
@@ -293,8 +306,19 @@ bool MainWindow::writeCurrentSerialOnce()
         appendCsvRecord(mac, serial, "WRITE_FAIL", csvErr);
         return false;
     }
+    QString result = "OK";
+    if (enablePrintCheck_->isChecked()) {
+        QString printErr;
+        if (!printSerialLabel(serial, mac, printErr)) {
+            appendLog("[ERR] Print failed: " + printErr);
+            result = "OK_PRINT_FAIL";
+        } else {
+            appendLog("[INFO] Label printed.");
+        }
+    }
+
     QString csvErr;
-    if (!appendCsvRecord(mac, serial, "OK", csvErr)) {
+    if (!appendCsvRecord(mac, serial, result, csvErr)) {
         appendLog("[ERR] CSV write failed: " + csvErr);
     }
     appendLog(QString("[INFO] Write done. serial=%1 mac=%2").arg(serial, mac));
@@ -454,12 +478,56 @@ bool MainWindow::isDuplicateRecord(const QString &mac, const QString &serial) co
             const QString oldMac = cols[1].trimmed();
             const QString oldSn = cols[2].trimmed();
             const QString oldResult = cols[3].trimmed();
-            if (oldResult == "OK" && (oldMac.compare(mac, Qt::CaseInsensitive) == 0 || oldSn == serial)) {
+            if (oldResult.startsWith("OK") && (oldMac.compare(mac, Qt::CaseInsensitive) == 0 || oldSn == serial)) {
                 return true;
             }
         }
     }
     return false;
+}
+
+QString MainWindow::buildPrintTemplate(const QString &serial, const QString &mac) const
+{
+    QString tpl = printTemplateEdit_->toPlainText();
+    tpl.replace("{SERIAL}", serial);
+    tpl.replace("{MAC}", mac);
+    return tpl;
+}
+
+bool MainWindow::printSerialLabel(const QString &serial, const QString &mac, QString &errMsg)
+{
+    bool okPort = false;
+    const int port = printerPortEdit_->text().toInt(&okPort);
+    if (!okPort || port <= 0 || port > 65535) {
+        errMsg = "Invalid printer port.";
+        return false;
+    }
+    const QString ip = printerIpEdit_->text().trimmed();
+    if (ip.isEmpty()) {
+        errMsg = "Printer IP is empty.";
+        return false;
+    }
+
+    QTcpSocket sock;
+    sock.connectToHost(ip, static_cast<quint16>(port));
+    if (!sock.waitForConnected(1500)) {
+        errMsg = "Printer connect timeout/fail.";
+        return false;
+    }
+
+    QByteArray payload = buildPrintTemplate(serial, mac).toUtf8();
+    if (!payload.endsWith('\n')) {
+        payload.append('\n');
+    }
+    if (sock.write(payload) < 0 || !sock.waitForBytesWritten(1500)) {
+        errMsg = "Printer write failed.";
+        sock.disconnectFromHost();
+        return false;
+    }
+
+    sock.disconnectFromHost();
+    errMsg.clear();
+    return true;
 }
 
 void MainWindow::onConnectClicked()
