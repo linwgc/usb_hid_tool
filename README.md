@@ -79,5 +79,5 @@ After changing `.pro`, Qt Creator may skip qmake. Do this once:
 ## Data and Trace
 - Runtime output directory: `Data/` (beside executable).
 - Logs: `Data/logs/tool_YYYYMMDD.log` (timestamped lines for trace/debug).
-- CSV records: `Data/csv/mac_sn_YYYYMMDD_XXX.csv`.
+- CSV records: `Data/csv/mac_sn_YYYYMMDD_XXX.csv` with fields `timestamp,mac,serial_number,burn_result,print_result`.
 - CSV auto-rotation by file size (5 MB per file), append-safe across app restart.

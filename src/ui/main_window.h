@@ -43,7 +43,7 @@ private:
     bool writeCurrentSerialOnce();
     QString buildSerialString(quint64 serialValue, int width, QString &errMsg) const;
     bool readMacAddress(QString &macString, QString &errMsg);
-    bool appendCsvRecord(const QString &mac, const QString &serial, const QString &result, QString &errMsg);
+    bool appendCsvRecord(const QString &mac, const QString &serial, const QString &burnResult, const QString &printResult, QString &errMsg);
     bool isDuplicateRecord(const QString &mac, const QString &serial) const;
     bool printSerialLabel(const QString &serial, const QString &mac, QString &errMsg);
     QString buildPrintTemplate(const QString &serial, const QString &mac) const;

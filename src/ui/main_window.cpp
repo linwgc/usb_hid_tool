@@ -287,7 +287,8 @@ bool MainWindow::writeCurrentSerialOnce()
     QString err;
     if (!readMacAddress(mac, err)) {
         appendLog("[ERR] MAC read failed: " + err);
-        appendCsvRecord("-", serial, "MAC_READ_FAIL", err);
+        QString csvErr;
+        appendCsvRecord("-", serial, "MAC_READ_FAIL", "NOT_RUN", csvErr);
         return false;
     }
     appendLog("[INFO] MAC read: " + mac);
@@ -295,7 +296,7 @@ bool MainWindow::writeCurrentSerialOnce()
     if (preventDuplicateCheck_->isChecked() && isDuplicateRecord(mac, serial)) {
         appendLog(QString("[WARN] Duplicate detected, skip write. mac=%1 serial=%2").arg(mac, serial));
         QString csvErr;
-        appendCsvRecord(mac, serial, "DUPLICATE_SKIP", csvErr);
+        appendCsvRecord(mac, serial, "DUPLICATE_SKIP", "NOT_RUN", csvErr);
         return false;
     }
 
@@ -303,22 +304,24 @@ bool MainWindow::writeCurrentSerialOnce()
     if (!serialService_->writeSerialByTemplate(snTemplateEdit_->toPlainText(), serial, currentTarget(), writeErr)) {
         appendLog("[ERR] " + writeErr);
         QString csvErr;
-        appendCsvRecord(mac, serial, "WRITE_FAIL", csvErr);
+        appendCsvRecord(mac, serial, "WRITE_FAIL", "NOT_RUN", csvErr);
         return false;
     }
-    QString result = "OK";
+    QString burnResult = "OK";
+    QString printResult = "NOT_RUN";
     if (enablePrintCheck_->isChecked()) {
         QString printErr;
         if (!printSerialLabel(serial, mac, printErr)) {
             appendLog("[ERR] Print failed: " + printErr);
-            result = "OK_PRINT_FAIL";
+            printResult = "FAIL";
         } else {
             appendLog("[INFO] Label printed.");
+            printResult = "OK";
         }
     }
 
     QString csvErr;
-    if (!appendCsvRecord(mac, serial, result, csvErr)) {
+    if (!appendCsvRecord(mac, serial, burnResult, printResult, csvErr)) {
         appendLog("[ERR] CSV write failed: " + csvErr);
     }
     appendLog(QString("[INFO] Write done. serial=%1 mac=%2").arg(serial, mac));
@@ -418,7 +421,7 @@ QString MainWindow::currentCsvFilePath() const
     return dataDir.filePath(QString("Data/csv/mac_sn_%1_999.csv").arg(day));
 }
 
-bool MainWindow::appendCsvRecord(const QString &mac, const QString &serial, const QString &result, QString &errMsg)
+bool MainWindow::appendCsvRecord(const QString &mac, const QString &serial, const QString &burnResult, const QString &printResult, QString &errMsg)
 {
     const QString path = currentCsvFilePath();
     QFile file(path);
@@ -430,7 +433,7 @@ bool MainWindow::appendCsvRecord(const QString &mac, const QString &serial, cons
 
     QTextStream out(&file);
     if (newFile) {
-        out << "timestamp,mac,serial_number,result\n";
+        out << "timestamp,mac,serial_number,burn_result,print_result\n";
     }
 
     QString safeMac = mac;
@@ -440,7 +443,8 @@ bool MainWindow::appendCsvRecord(const QString &mac, const QString &serial, cons
     out << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
         << "," << safeMac
         << "," << safeSn
-        << "," << result
+        << "," << burnResult
+        << "," << printResult
         << "\n";
     errMsg.clear();
     return true;
@@ -472,13 +476,13 @@ bool MainWindow::isDuplicateRecord(const QString &mac, const QString &serial) co
                 }
             }
             const QStringList cols = line.split(',');
-            if (cols.size() < 4) {
+            if (cols.size() < 5) {
                 continue;
             }
             const QString oldMac = cols[1].trimmed();
             const QString oldSn = cols[2].trimmed();
-            const QString oldResult = cols[3].trimmed();
-            if (oldResult.startsWith("OK") && (oldMac.compare(mac, Qt::CaseInsensitive) == 0 || oldSn == serial)) {
+            const QString oldBurnResult = cols[3].trimmed();
+            if (oldBurnResult == "OK" && (oldMac.compare(mac, Qt::CaseInsensitive) == 0 || oldSn == serial)) {
                 return true;
             }
         }
