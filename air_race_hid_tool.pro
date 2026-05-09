@@ -15,7 +15,10 @@ SOURCES += \
     src/transport/hid_transport.cpp \
     src/service/race_service.cpp \
     src/service/serial_number_service.cpp \
-    src/ui/main_window.cpp
+    src/ui/main_window.cpp \
+    src/ui/sn_mode_settings.cpp \
+    src/ui/sn_mode_settings_dialog.cpp \
+    src/ui/app_paths.cpp
 
 HEADERS += \
     src/core/race_packet.h \
@@ -23,7 +26,10 @@ HEADERS += \
     src/transport/hid_transport.h \
     src/service/race_service.h \
     src/service/serial_number_service.h \
-    src/ui/main_window.h
+    src/ui/main_window.h \
+    src/ui/sn_mode_settings.h \
+    src/ui/sn_mode_settings_dialog.h \
+    src/ui/app_paths.h
 
 # hidapi setup:
 # A) Preferred: use local source tree under usb_tool/hidapi (no prebuilt lib needed).

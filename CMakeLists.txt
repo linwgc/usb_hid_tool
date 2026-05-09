@@ -24,6 +24,12 @@ add_executable(air_race_hid_tool
     src/service/serial_number_service.cpp
     src/ui/main_window.h
     src/ui/main_window.cpp
+    src/ui/sn_mode_settings.h
+    src/ui/sn_mode_settings.cpp
+    src/ui/sn_mode_settings_dialog.h
+    src/ui/sn_mode_settings_dialog.cpp
+    src/ui/app_paths.h
+    src/ui/app_paths.cpp
 )
 
 target_link_libraries(air_race_hid_tool

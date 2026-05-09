@@ -26,13 +26,19 @@ bool RacePacket::parseInReport(const QByteArray &rawReport, QByteArray &racePayl
         return false;
     }
     const int validLen = static_cast<quint8>(rawReport[1]);
-    if (validLen < 1 || validLen > (cfg.reportSize - 2)) {
+    if (validLen == 0) {
+        errMsg.clear();
+        return false;
+    }
+    /* Firmware (mux_usb.c): LEN = bytes copied to offset 3 only; target is separate at [2].
+       OUT reports from host use LEN = 1 + |raceCmd| (target + cmd). IN uses LEN = |race| at [3..]. */
+    if (validLen > (cfg.reportSize - 3)) {
         errMsg = "Invalid valid-length byte in HID report.";
         return false;
     }
 
     target = static_cast<quint8>(rawReport[2]);
-    racePayload = rawReport.mid(3, validLen - 1);
+    racePayload = rawReport.mid(3, validLen);
     errMsg.clear();
     return true;
 }

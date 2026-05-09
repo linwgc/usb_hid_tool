@@ -90,7 +90,9 @@ void RaceService::onHidReportReceived(const QByteArray &report)
     quint8 target = 0;
     QString err;
     if (!RacePacket::parseInReport(report, payload, target, cfg_, err)) {
-        emit logLine("[RX][ERR] " + err);
+        if (!err.isEmpty()) {
+            emit logLine("[RX][ERR] " + err);
+        }
         return;
     }
     emit logLine(QString("[RX] target=0x%1 payload=%2")

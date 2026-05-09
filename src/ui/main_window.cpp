@@ -1,13 +1,14 @@
 #include "ui/main_window.h"
+#include "ui/app_paths.h"
+#include "ui/sn_mode_settings_dialog.h"
 
 #include "core/race_command.h"
 #include "service/race_service.h"
 #include "service/serial_number_service.h"
 #include "transport/hid_transport.h"
 
-#include <QCheckBox>
 #include <QComboBox>
-#include <QCoreApplication>
+#include <QDialog>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -19,7 +20,6 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
-#include <QRegularExpression>
 #include <QTabWidget>
 #include <QTextEdit>
 #include <QTextStream>
@@ -30,6 +30,16 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
+    QString loadErr;
+    if (!snMode_.loadFromFile(&loadErr)) {
+        snMode_ = SnModeSettings::defaults();
+    }
+    bool okStart = false;
+    const quint64 st = snMode_.snStart.toULongLong(&okStart);
+    if (okStart) {
+        nextSerial_ = st;
+    }
+
     transport_ = new race::HidTransport(this);
     raceService_ = new race::RaceService(transport_, this);
     serialService_ = new race::SerialNumberService(raceService_, this);
@@ -38,32 +48,38 @@ MainWindow::MainWindow(QWidget *parent)
     connect(raceService_, &race::RaceService::logLine, this, &MainWindow::appendLog);
     connect(serialService_, &race::SerialNumberService::logLine, this, &MainWindow::appendLog);
     connect(&autoSnTimer_, &QTimer::timeout, this, &MainWindow::onAutoSnTick);
+
+    if (!loadErr.isEmpty()) {
+        appendLog(QStringLiteral("[WARN] SN settings: %1").arg(loadErr));
+    }
+    appendLog(QStringLiteral("[INFO] Data files root: %1 (subdirs Log, Data)").arg(appToolDataRoot()));
+    updateSnModePreview();
 }
 
 MainWindow::~MainWindow() = default;
 
 void MainWindow::setupUi()
 {
-    setWindowTitle("Airoha USB HID RACE Tool");
-    resize(1100, 760);
+    setWindowTitle(QStringLiteral("Airoha USB HID RACE Tool"));
+    resize(900, 720);
 
     auto *central = new QWidget(this);
     auto *mainLayout = new QVBoxLayout(central);
 
-    auto *cfgGroup = new QGroupBox("USB HID Config", central);
+    auto *cfgGroup = new QGroupBox(QStringLiteral("USB HID Config"), central);
     auto *cfgLayout = new QFormLayout(cfgGroup);
-    vidEdit_ = new QLineEdit("0x0E8D", cfgGroup);
-    pidEdit_ = new QLineEdit("0x0809", cfgGroup);
-    outReportEdit_ = new QLineEdit("0x06", cfgGroup);
-    inReportEdit_ = new QLineEdit("0x07", cfgGroup);
-    cfgLayout->addRow("VID", vidEdit_);
-    cfgLayout->addRow("PID", pidEdit_);
-    cfgLayout->addRow("OUT Report ID", outReportEdit_);
-    cfgLayout->addRow("IN Report ID", inReportEdit_);
+    vidEdit_ = new QLineEdit(QStringLiteral("0x0E8D"), cfgGroup);
+    pidEdit_ = new QLineEdit(QStringLiteral("0x0809"), cfgGroup);
+    outReportEdit_ = new QLineEdit(QStringLiteral("0x06"), cfgGroup);
+    inReportEdit_ = new QLineEdit(QStringLiteral("0x07"), cfgGroup);
+    cfgLayout->addRow(QStringLiteral("VID"), vidEdit_);
+    cfgLayout->addRow(QStringLiteral("PID"), pidEdit_);
+    cfgLayout->addRow(QStringLiteral("OUT Report ID"), outReportEdit_);
+    cfgLayout->addRow(QStringLiteral("IN Report ID"), inReportEdit_);
 
     auto *connLayout = new QHBoxLayout();
-    auto *connectBtn = new QPushButton("Connect", cfgGroup);
-    auto *disconnectBtn = new QPushButton("Disconnect", cfgGroup);
+    auto *connectBtn = new QPushButton(QStringLiteral("Connect"), cfgGroup);
+    auto *disconnectBtn = new QPushButton(QStringLiteral("Disconnect"), cfgGroup);
     connLayout->addWidget(connectBtn);
     connLayout->addWidget(disconnectBtn);
     cfgLayout->addRow(connLayout);
@@ -74,134 +90,71 @@ void MainWindow::setupUi()
     auto *normalPage = new QWidget(tabs);
     auto *normalLayout = new QVBoxLayout(normalPage);
     targetCombo_ = new QComboBox(normalPage);
-    targetCombo_->addItem("Local(0x00)", 0x00);
-    targetCombo_->addItem("Remote(0x80)", 0x80);
-    normalLayout->addWidget(new QLabel("Target Device", normalPage));
+    targetCombo_->addItem(QStringLiteral("Local(0x00)"), 0x00);
+    targetCombo_->addItem(QStringLiteral("Remote(0x80)"), 0x80);
+    normalLayout->addWidget(new QLabel(QStringLiteral("Target Device"), normalPage));
     normalLayout->addWidget(targetCombo_);
 
     singleCmdEdit_ = new QPlainTextEdit(normalPage);
-    singleCmdEdit_->setPlaceholderText("05 5A ...");
-    normalLayout->addWidget(new QLabel("Single RACE CMD (hex bytes)", normalPage));
+    singleCmdEdit_->setPlaceholderText(QStringLiteral("05 5A ..."));
+    normalLayout->addWidget(new QLabel(QStringLiteral("Single RACE CMD (hex bytes)"), normalPage));
     normalLayout->addWidget(singleCmdEdit_);
-    auto *sendSingleBtn = new QPushButton("Send Single", normalPage);
+    auto *sendSingleBtn = new QPushButton(QStringLiteral("Send Single"), normalPage);
     normalLayout->addWidget(sendSingleBtn);
 
     sequenceEdit_ = new QPlainTextEdit(normalPage);
-    sequenceEdit_->setPlaceholderText("# One command each line\n05 5A 03 00 ...\n05 5B 03 00 ...");
-    normalLayout->addWidget(new QLabel("Sequence Mode (one command per line)", normalPage));
+    sequenceEdit_->setPlaceholderText(
+        QStringLiteral("# One command each line\n05 5A 03 00 ...\n05 5B 03 00 ..."));
+    normalLayout->addWidget(new QLabel(QStringLiteral("Sequence Mode (one command per line)"), normalPage));
     normalLayout->addWidget(sequenceEdit_);
-    auto *sendSeqBtn = new QPushButton("Send Sequence", normalPage);
+    auto *sendSeqBtn = new QPushButton(QStringLiteral("Send Sequence"), normalPage);
     normalLayout->addWidget(sendSeqBtn);
 
-    tabs->addTab(normalPage, "Normal Mode");
+    tabs->addTab(normalPage, QStringLiteral("Normal Mode"));
 
     auto *snPage = new QWidget(tabs);
-    auto *snLayout = new QFormLayout(snPage);
-    snPrefixEdit_ = new QLineEdit("SPK", snPage);
-    snStartEdit_ = new QLineEdit("1", snPage);
-    snWidthEdit_ = new QLineEdit("8", snPage);
-    snPollMsEdit_ = new QLineEdit("500", snPage);
-    snTemplateEdit_ = new QPlainTextEdit(snPage);
-    snTemplateEdit_->setPlaceholderText("05 5A ... {SERIAL_ASCII}");
+    auto *snLayout = new QVBoxLayout(snPage);
 
-    usePlantCheck_ = new QCheckBox("Enable Plant", snPage);
-    useManufacturerCheck_ = new QCheckBox("Enable Manufacturer", snPage);
-    useProductCheck_ = new QCheckBox("Enable Product+Variant", snPage);
-    useMonthCheck_ = new QCheckBox("Enable Month", snPage);
-    useYearCheck_ = new QCheckBox("Enable Year", snPage);
-    preventDuplicateCheck_ = new QCheckBox("Prevent duplicate burning (check CSV history)", snPage);
-    enablePrintCheck_ = new QCheckBox("Print label after successful write", snPage);
-    usePlantCheck_->setChecked(true);
-    useManufacturerCheck_->setChecked(true);
-    useProductCheck_->setChecked(true);
-    useMonthCheck_->setChecked(true);
-    useYearCheck_->setChecked(true);
-    preventDuplicateCheck_->setChecked(true);
-    enablePrintCheck_->setChecked(false);
+    auto *settingsRow = new QHBoxLayout();
+    auto *snSettingsBtn = new QPushButton(QStringLiteral("Serial Number Settings…"), snPage);
+    settingsRow->addWidget(snSettingsBtn);
+    settingsRow->addStretch(1);
+    snLayout->addLayout(settingsRow);
 
-    plantCombo_ = new QComboBox(snPage);
-    plantCombo_->addItem("HZ - HuiZhou", "HZ");
-    plantCombo_->addItem("DG - DongGuan", "DG");
+    snSummaryLabel_ = new QLabel(snPage);
+    snSummaryLabel_->setWordWrap(true);
+    snLayout->addWidget(snSummaryLabel_);
 
-    manufacturerCombo_ = new QComboBox(snPage);
-    manufacturerCombo_->addItem("A - AUT", "A");
-    manufacturerCombo_->addItem("H - Honsenn", "H");
+    snLayout->addWidget(new QLabel(QStringLiteral("Preview RACE command (hex)"), snPage));
+    snPreviewEdit_ = new QPlainTextEdit(snPage);
+    snPreviewEdit_->setReadOnly(true);
+    snPreviewEdit_->setPlaceholderText(QStringLiteral("Configure settings and connect to preview."));
+    snPreviewEdit_->setMinimumHeight(120);
+    snLayout->addWidget(snPreviewEdit_, 1);
 
-    productCombo_ = new QComboBox(snPage);
-    productCombo_->addItem("0011 - MIX SKYSCRAPER BLACK", "0011");
-    productCombo_->addItem("0012 - MIX OLYMPIC WHITE", "0012");
-    productCombo_->addItem("0013 - MIX SURF BLUE", "0013");
-    productCombo_->addItem("0014 - MIX LILAC", "0014");
-    productCombo_->addItem("0015 - MIX SAKURA PINK", "0015");
-    productCombo_->addItem("0021 - ELIE6 SKYSCRAPER BLACK", "0021");
-    productCombo_->addItem("0022 - ELIE6 OLYMPIC WHITE", "0022");
-    productCombo_->addItem("0031 - ELIE12 SKYSCRAPER BLACK", "0031");
-    productCombo_->addItem("0032 - ELIE12 OLYMPIC WHITE", "0032");
-    productCombo_->addItem("0041 - TRACK 02 SKYSCRAPER BLACK", "0041");
-    productCombo_->addItem("0042 - TRACK 02 OLYMPIC WHITE", "0042");
-    productCombo_->addItem("0051 - TOUR 02 SKYSCRAPER BLACK", "0051");
-    productCombo_->addItem("0052 - TOUR 02 OLYMPIC WHITE", "0052");
-
-    monthCombo_ = new QComboBox(snPage);
-    monthCombo_->addItem("A - January", "A");
-    monthCombo_->addItem("B - February", "B");
-    monthCombo_->addItem("C - March", "C");
-    monthCombo_->addItem("D - April", "D");
-    monthCombo_->addItem("E - May", "E");
-    monthCombo_->addItem("F - June", "F");
-    monthCombo_->addItem("G - July", "G");
-    monthCombo_->addItem("H - August", "H");
-    monthCombo_->addItem("I - September", "I");
-    monthCombo_->addItem("J - October", "J");
-
-    yearCombo_ = new QComboBox(snPage);
-    yearCombo_->addItem("A - 2025", "A");
-    yearCombo_->addItem("B - 2026", "B");
-    yearCombo_->addItem("C - 2027", "C");
-    yearCombo_->addItem("D - 2028", "D");
-    yearCombo_->addItem("E - 2029", "E");
-    yearCombo_->addItem("F - 2030", "F");
-
-    printerIpEdit_ = new QLineEdit("192.168.1.100", snPage);
-    printerPortEdit_ = new QLineEdit("9100", snPage);
-    printTemplateEdit_ = new QPlainTextEdit(snPage);
-    printTemplateEdit_->setPlaceholderText("^XA\n^FO30,30^A0N,40,40^FD{SERIAL}^FS\n^FO30,90^BY2\n^BCN,80,Y,N,N^FD{SERIAL}^FS\n^FO30,190^A0N,28,28^FDMAC:{MAC}^FS\n^XZ");
-    printTemplateEdit_->setPlainText("^XA\n^FO30,30^A0N,40,40^FD{SERIAL}^FS\n^FO30,90^BY2\n^BCN,80,Y,N,N^FD{SERIAL}^FS\n^FO30,190^A0N,28,28^FDMAC:{MAC}^FS\n^XZ");
-
-    snLayout->addRow("SN Prefix", snPrefixEdit_);
-    snLayout->addRow(usePlantCheck_, plantCombo_);
-    snLayout->addRow(useManufacturerCheck_, manufacturerCombo_);
-    snLayout->addRow(useProductCheck_, productCombo_);
-    snLayout->addRow("Start Number", snStartEdit_);
-    snLayout->addRow("Number Width", snWidthEdit_);
-    snLayout->addRow(useMonthCheck_, monthCombo_);
-    snLayout->addRow(useYearCheck_, yearCombo_);
-    snLayout->addRow("Auto Poll ms", snPollMsEdit_);
-    snLayout->addRow(preventDuplicateCheck_);
-    snLayout->addRow(enablePrintCheck_);
-    snLayout->addRow("Printer IP", printerIpEdit_);
-    snLayout->addRow("Printer Port", printerPortEdit_);
-    snLayout->addRow("Print Template (ZPL)", printTemplateEdit_);
-    snLayout->addRow("RACE Template ({SERIAL_ASCII})", snTemplateEdit_);
+    snLastResultLabel_ = new QLabel(QStringLiteral("Last: (no operation yet)"), snPage);
+    snLastResultLabel_->setWordWrap(true);
+    snLayout->addWidget(snLastResultLabel_);
 
     auto *manualBtnLayout = new QHBoxLayout();
-    auto *writeNextBtn = new QPushButton("Manual Write Next SN", snPage);
+    auto *writeNextBtn = new QPushButton(QStringLiteral("Manual Write Next SN"), snPage);
     manualBtnLayout->addWidget(writeNextBtn);
-    snLayout->addRow(manualBtnLayout);
+    snLayout->addLayout(manualBtnLayout);
 
     auto *autoBtnLayout = new QHBoxLayout();
-    auto *startAutoBtn = new QPushButton("Start Auto Write", snPage);
-    auto *stopAutoBtn = new QPushButton("Stop Auto Write", snPage);
+    auto *startAutoBtn = new QPushButton(QStringLiteral("Start Auto Write"), snPage);
+    auto *stopAutoBtn = new QPushButton(QStringLiteral("Stop Auto Write"), snPage);
     autoBtnLayout->addWidget(startAutoBtn);
     autoBtnLayout->addWidget(stopAutoBtn);
-    snLayout->addRow(autoBtnLayout);
-    tabs->addTab(snPage, "Serial Number Mode");
+    snLayout->addLayout(autoBtnLayout);
+
+    tabs->addTab(snPage, QStringLiteral("Serial Number Mode"));
 
     mainLayout->addWidget(tabs);
 
     logEdit_ = new QTextEdit(central);
     logEdit_->setReadOnly(true);
-    mainLayout->addWidget(new QLabel("Log", central));
+    mainLayout->addWidget(new QLabel(QStringLiteral("Log"), central));
     mainLayout->addWidget(logEdit_, 1);
     setCentralWidget(central);
 
@@ -212,19 +165,82 @@ void MainWindow::setupUi()
     connect(writeNextBtn, &QPushButton::clicked, this, &MainWindow::onWriteNextSerialClicked);
     connect(startAutoBtn, &QPushButton::clicked, this, &MainWindow::onStartAutoSnClicked);
     connect(stopAutoBtn, &QPushButton::clicked, this, &MainWindow::onStopAutoSnClicked);
+    connect(snSettingsBtn, &QPushButton::clicked, this, &MainWindow::onSnSettingsClicked);
 }
 
 void MainWindow::appendLog(const QString &line)
 {
-    const QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz");
-    const QString full = QString("[%1] %2").arg(ts, line);
+    const QString ts = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
+    const QString full = QStringLiteral("[%1] %2").arg(ts, line);
     logEdit_->append(full);
 
-    QFile file(currentLogFilePath());
+    const QString logPath = currentLogFilePath();
+    QFile file(logPath);
     if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
         QTextStream out(&file);
         out << full << "\n";
+    } else {
+        logEdit_->append(QStringLiteral("[%1] [ERR] Cannot write log file: %2")
+                             .arg(ts, logPath));
     }
+}
+
+void MainWindow::onSnSettingsClicked()
+{
+    SnModeSettingsDialog dlg(this);
+    dlg.setSettings(snMode_);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    snMode_ = dlg.settings();
+    QString saveErr;
+    if (!snMode_.saveToFile(&saveErr)) {
+        appendLog(QStringLiteral("[ERR] Save SN settings: %1").arg(saveErr));
+    } else {
+        appendLog(QStringLiteral("[INFO] SN settings saved to %1").arg(SnModeSettings::storageFilePath()));
+    }
+    bool ok = false;
+    const quint64 start = snMode_.snStart.toULongLong(&ok);
+    if (ok && nextSerial_ < start) {
+        nextSerial_ = start;
+    }
+    updateSnModePreview();
+}
+
+void MainWindow::updateSnModePreview()
+{
+    quint64 start = 0;
+    int width = 0;
+    QString err;
+    if (!validateSerialRange(start, width, &err)) {
+        snPreviewEdit_->setPlainText(err.isEmpty() ? QStringLiteral("Invalid start/width in settings.") : err);
+        snSummaryLabel_->clear();
+        return;
+    }
+
+    QString serErr;
+    const QString serial = buildSerialString(nextSerial_, width, serErr);
+    if (serial.isEmpty()) {
+        snPreviewEdit_->setPlainText(serErr);
+        snSummaryLabel_->clear();
+        return;
+    }
+
+    QString hexErr;
+    const QByteArray cmd = serialService_->buildCmdFromTemplate(snMode_.snTemplate, serial, hexErr);
+    if (cmd.isEmpty()) {
+        snPreviewEdit_->setPlainText(hexErr.isEmpty() ? QStringLiteral("(empty command)") : hexErr);
+        snSummaryLabel_->setText(QStringLiteral("Next serial string: %1").arg(serial));
+        return;
+    }
+    snPreviewEdit_->setPlainText(race::RaceCommand::toHexString(cmd));
+    snSummaryLabel_->setText(QStringLiteral("Next serial string: %1").arg(serial));
+}
+
+void MainWindow::setSnLastResult(bool ok, const QString &detail)
+{
+    const QString prefix = ok ? QStringLiteral("Last: OK — ") : QStringLiteral("Last: FAIL — ");
+    snLastResultLabel_->setText(prefix + detail);
 }
 
 quint8 MainWindow::currentTarget() const
@@ -245,25 +261,39 @@ bool MainWindow::parseUsbConfig(quint16 &vid, quint16 &pid)
     cfg_.inReportId = static_cast<quint8>(inReportEdit_->text().toUInt(&okIn, 16));
 
     if (!okVid || !okPid || !okOut || !okIn) {
-        appendLog("[ERR] Invalid VID/PID/Report ID input.");
+        appendLog(QStringLiteral("[ERR] Invalid VID/PID/Report ID input."));
         return false;
     }
     raceService_->setPacketConfig(cfg_);
     return true;
 }
 
-bool MainWindow::prepareSerialConfig(quint64 &start, int &width)
+bool MainWindow::validateSerialRange(quint64 &start, int &width, QString *errMsg)
 {
     bool okStart = false;
     bool okWidth = false;
-    start = snStartEdit_->text().toULongLong(&okStart);
-    width = snWidthEdit_->text().toInt(&okWidth);
+    start = snMode_.snStart.toULongLong(&okStart);
+    width = snMode_.snWidth.toInt(&okWidth);
     if (!okStart || !okWidth || width <= 0) {
-        appendLog("[ERR] Invalid serial setup.");
+        if (errMsg) {
+            *errMsg = QStringLiteral("Invalid start number or width.");
+        }
         return false;
     }
     if (nextSerial_ < start) {
         nextSerial_ = start;
+    }
+    if (errMsg) {
+        errMsg->clear();
+    }
+    return true;
+}
+
+bool MainWindow::prepareSerialConfig(quint64 &start, int &width)
+{
+    if (!validateSerialRange(start, width, nullptr)) {
+        appendLog(QStringLiteral("[ERR] Invalid serial setup."));
+        return false;
     }
     return true;
 }
@@ -273,86 +303,93 @@ bool MainWindow::writeCurrentSerialOnce()
     quint64 start = 0;
     int width = 0;
     if (!prepareSerialConfig(start, width)) {
+        setSnLastResult(false, QStringLiteral("invalid serial setup"));
         return false;
     }
 
     QString serialErr;
     const QString serial = buildSerialString(nextSerial_, width, serialErr);
     if (serial.isEmpty()) {
-        appendLog("[ERR] " + serialErr);
+        appendLog(QStringLiteral("[ERR] %1").arg(serialErr));
+        setSnLastResult(false, serialErr);
         return false;
     }
 
     QString mac;
     QString err;
     if (!readMacAddress(mac, err)) {
-        appendLog("[ERR] MAC read failed: " + err);
+        appendLog(QStringLiteral("[ERR] MAC read failed: %1").arg(err));
         QString csvErr;
-        appendCsvRecord("-", serial, "MAC_READ_FAIL", "NOT_RUN", csvErr);
+        appendCsvRecord(QStringLiteral("-"), serial, QStringLiteral("MAC_READ_FAIL"), QStringLiteral("NOT_RUN"), csvErr);
+        setSnLastResult(false, QStringLiteral("MAC read: %1").arg(err));
         return false;
     }
-    appendLog("[INFO] MAC read: " + mac);
+    appendLog(QStringLiteral("[INFO] MAC read: %1").arg(mac));
 
-    if (preventDuplicateCheck_->isChecked() && isDuplicateRecord(mac, serial)) {
-        appendLog(QString("[WARN] Duplicate detected, skip write. mac=%1 serial=%2").arg(mac, serial));
+    if (snMode_.preventDuplicate && isDuplicateRecord(mac, serial)) {
+        appendLog(QStringLiteral("[WARN] Duplicate detected, skip write. mac=%1 serial=%2").arg(mac, serial));
         QString csvErr;
-        appendCsvRecord(mac, serial, "DUPLICATE_SKIP", "NOT_RUN", csvErr);
+        appendCsvRecord(mac, serial, QStringLiteral("DUPLICATE_SKIP"), QStringLiteral("NOT_RUN"), csvErr);
+        setSnLastResult(false, QStringLiteral("duplicate skipped"));
         return false;
     }
 
     QString writeErr;
-    if (!serialService_->writeSerialByTemplate(snTemplateEdit_->toPlainText(), serial, currentTarget(), writeErr)) {
-        appendLog("[ERR] " + writeErr);
+    if (!serialService_->writeSerialByTemplate(snMode_.snTemplate, serial, currentTarget(), writeErr)) {
+        appendLog(QStringLiteral("[ERR] %1").arg(writeErr));
         QString csvErr;
-        appendCsvRecord(mac, serial, "WRITE_FAIL", "NOT_RUN", csvErr);
+        appendCsvRecord(mac, serial, QStringLiteral("WRITE_FAIL"), QStringLiteral("NOT_RUN"), csvErr);
+        setSnLastResult(false, writeErr);
         return false;
     }
-    QString burnResult = "OK";
-    QString printResult = "NOT_RUN";
-    if (enablePrintCheck_->isChecked()) {
+    QString burnResult = QStringLiteral("OK");
+    QString printResult = QStringLiteral("NOT_RUN");
+    if (snMode_.enablePrint) {
         QString printErr;
         if (!printSerialLabel(serial, mac, printErr)) {
-            appendLog("[ERR] Print failed: " + printErr);
-            printResult = "FAIL";
+            appendLog(QStringLiteral("[ERR] Print failed: %1").arg(printErr));
+            printResult = QStringLiteral("FAIL");
         } else {
-            appendLog("[INFO] Label printed.");
-            printResult = "OK";
+            appendLog(QStringLiteral("[INFO] Label printed."));
+            printResult = QStringLiteral("OK");
         }
     }
 
     QString csvErr;
     if (!appendCsvRecord(mac, serial, burnResult, printResult, csvErr)) {
-        appendLog("[ERR] CSV write failed: " + csvErr);
+        appendLog(QStringLiteral("[ERR] CSV write failed: %1").arg(csvErr));
     }
-    appendLog(QString("[INFO] Write done. serial=%1 mac=%2").arg(serial, mac));
+    appendLog(QStringLiteral("[INFO] Write done. serial=%1 mac=%2").arg(serial, mac));
+    setSnLastResult(true, QStringLiteral("serial=%1 mac=%2").arg(serial, mac));
     ++nextSerial_;
+    updateSnModePreview();
     return true;
 }
 
 QString MainWindow::buildSerialString(quint64 serialValue, int width, QString &errMsg) const
 {
-    const QString serialNum = QString("%1").arg(serialValue, width, 10, QChar('0'));
+    const QString serialNum = QStringLiteral("%1").arg(serialValue, width, 10, QChar('0'));
     if (serialNum.size() != width) {
-        errMsg = "Serial width overflow.";
+        errMsg = QStringLiteral("Serial width overflow.");
         return {};
     }
 
-    QString result = snPrefixEdit_->text().trimmed();
-    if (usePlantCheck_->isChecked()) {
-        result += plantCombo_->currentData().toString();
+    QString result = snMode_.snPrefix.trimmed();
+    if (snMode_.usePlant) {
+        result += snMode_.plantCode;
     }
-    if (useManufacturerCheck_->isChecked()) {
-        result += manufacturerCombo_->currentData().toString();
+    if (snMode_.useManufacturer) {
+        result += snMode_.manufacturerCode;
     }
-    if (useProductCheck_->isChecked()) {
-        result += productCombo_->currentData().toString();
+    if (snMode_.useProduct) {
+        result += snMode_.productCode;
     }
     result += serialNum;
-    if (useMonthCheck_->isChecked()) {
-        result += monthCombo_->currentData().toString();
+    if (snMode_.useMonth) {
+        result += snMode_.monthCode;
     }
-    if (useYearCheck_->isChecked()) {
-        result += yearCombo_->currentData().toString();
+    if (snMode_.useYear) {
+        result += snMode_.yearCode;
     }
     errMsg.clear();
     return result;
@@ -361,7 +398,7 @@ QString MainWindow::buildSerialString(quint64 serialValue, int width, QString &e
 bool MainWindow::readMacAddress(QString &macString, QString &errMsg)
 {
     QByteArray cmd;
-    if (!race::RaceCommand::parseHexString("05 5A 03 00 D5 0C 00", cmd, errMsg)) {
+    if (!race::RaceCommand::parseHexString(QStringLiteral("05 5A 03 00 D5 0C 00"), cmd, errMsg)) {
         return false;
     }
 
@@ -370,26 +407,29 @@ bool MainWindow::readMacAddress(QString &macString, QString &errMsg)
         return false;
     }
     if (resp.size() < 14) {
-        errMsg = "MAC response too short.";
+        errMsg = QStringLiteral("MAC response too short.");
         return false;
     }
     if (static_cast<quint8>(resp[0]) != 0x05 || static_cast<quint8>(resp[1]) != 0x5B) {
-        errMsg = "Unexpected MAC response header.";
+        errMsg = QStringLiteral("Unexpected MAC response header.");
         return false;
     }
     if (static_cast<quint8>(resp[4]) != 0xD5 || static_cast<quint8>(resp[5]) != 0x0C) {
-        errMsg = "Unexpected MAC response ID.";
+        errMsg = QStringLiteral("Unexpected MAC response ID.");
         return false;
     }
     if (static_cast<quint8>(resp[6]) != 0x00) {
-        errMsg = QString("MAC read status fail: 0x%1").arg(static_cast<quint8>(resp[6]), 2, 16, QChar('0'));
+        errMsg = QStringLiteral("MAC read status fail: 0x%1")
+                     .arg(static_cast<quint8>(resp[6]), 2, 16, QChar('0'));
         return false;
     }
 
     const QByteArray macLe = resp.mid(8, 6);
     QStringList parts;
     for (int i = macLe.size() - 1; i >= 0; --i) {
-        parts.append(QString("%1").arg(static_cast<quint8>(macLe[i]), 2, 16, QChar('0')).toUpper());
+        parts.append(QStringLiteral("%1")
+                         .arg(static_cast<quint8>(macLe[i]), 2, 16, QChar('0'))
+                         .toUpper());
     }
     macString = parts.join(':');
     errMsg.clear();
@@ -398,36 +438,39 @@ bool MainWindow::readMacAddress(QString &macString, QString &errMsg)
 
 QString MainWindow::currentLogFilePath() const
 {
-    QDir dataDir(QCoreApplication::applicationDirPath());
-    dataDir.mkpath("Data/logs");
-    return dataDir.filePath("Data/logs/tool_" + QDateTime::currentDateTime().toString("yyyyMMdd") + ".log");
+    return QDir(appLogDir())
+        .filePath(QStringLiteral("tool_%1.log")
+                       .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd"))));
 }
 
 QString MainWindow::currentCsvFilePath() const
 {
-    QDir dataDir(QCoreApplication::applicationDirPath());
-    dataDir.mkpath("Data/csv");
+    QDir csvRoot(appDataDir());
+    csvRoot.mkpath(QStringLiteral("csv"));
+    const QString csvDirPath = csvRoot.filePath(QStringLiteral("csv"));
 
-    const QString day = QDateTime::currentDateTime().toString("yyyyMMdd");
+    const QString day = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd"));
     const qint64 maxSize = 5 * 1024 * 1024;
     for (int idx = 1; idx < 1000; ++idx) {
-        const QString name = QString("Data/csv/mac_sn_%1_%2.csv").arg(day).arg(idx, 3, 10, QChar('0'));
-        const QString path = dataDir.filePath(name);
+        const QString name =
+            QStringLiteral("mac_sn_%1_%2.csv").arg(day).arg(idx, 3, 10, QChar('0'));
+        const QString path = QDir(csvDirPath).filePath(name);
         QFileInfo fi(path);
         if (!fi.exists() || fi.size() < maxSize) {
             return path;
         }
     }
-    return dataDir.filePath(QString("Data/csv/mac_sn_%1_999.csv").arg(day));
+    return QDir(csvDirPath).filePath(QStringLiteral("mac_sn_%1_999.csv").arg(day));
 }
 
-bool MainWindow::appendCsvRecord(const QString &mac, const QString &serial, const QString &burnResult, const QString &printResult, QString &errMsg)
+bool MainWindow::appendCsvRecord(const QString &mac, const QString &serial, const QString &burnResult,
+                                 const QString &printResult, QString &errMsg)
 {
     const QString path = currentCsvFilePath();
     QFile file(path);
     const bool newFile = !QFileInfo::exists(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
-        errMsg = "Cannot open csv file: " + path;
+        errMsg = QStringLiteral("Cannot open csv file: %1").arg(path);
         return false;
     }
 
@@ -440,22 +483,19 @@ bool MainWindow::appendCsvRecord(const QString &mac, const QString &serial, cons
     QString safeSn = serial;
     safeMac.replace(',', '_');
     safeSn.replace(',', '_');
-    out << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
-        << "," << safeMac
-        << "," << safeSn
-        << "," << burnResult
-        << "," << printResult
-        << "\n";
+    out << QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) << "," << safeMac << ","
+        << safeSn << "," << burnResult << "," << printResult << "\n";
     errMsg.clear();
     return true;
 }
 
 bool MainWindow::isDuplicateRecord(const QString &mac, const QString &serial) const
 {
-    QDir dataDir(QCoreApplication::applicationDirPath());
-    dataDir.mkpath("Data/csv");
-    QDir csvDir(dataDir.filePath("Data/csv"));
-    const QStringList files = csvDir.entryList(QStringList() << "mac_sn_*.csv", QDir::Files, QDir::Name);
+    const QString csvPath = QDir(appDataDir()).filePath(QStringLiteral("csv"));
+    QDir().mkpath(csvPath);
+    QDir csvDir(csvPath);
+    const QStringList files = csvDir.entryList(QStringList() << QStringLiteral("mac_sn_*.csv"), QDir::Files,
+                                               QDir::Name);
 
     for (const QString &name : files) {
         QFile file(csvDir.filePath(name));
@@ -471,7 +511,7 @@ bool MainWindow::isDuplicateRecord(const QString &mac, const QString &serial) co
             }
             if (firstLine) {
                 firstLine = false;
-                if (line.startsWith("timestamp,mac,serial_number")) {
+                if (line.startsWith(QStringLiteral("timestamp,mac,serial_number"))) {
                     continue;
                 }
             }
@@ -482,7 +522,8 @@ bool MainWindow::isDuplicateRecord(const QString &mac, const QString &serial) co
             const QString oldMac = cols[1].trimmed();
             const QString oldSn = cols[2].trimmed();
             const QString oldBurnResult = cols[3].trimmed();
-            if (oldBurnResult == "OK" && (oldMac.compare(mac, Qt::CaseInsensitive) == 0 || oldSn == serial)) {
+            if (oldBurnResult == QStringLiteral("OK") &&
+                (oldMac.compare(mac, Qt::CaseInsensitive) == 0 || oldSn == serial)) {
                 return true;
             }
         }
@@ -492,30 +533,30 @@ bool MainWindow::isDuplicateRecord(const QString &mac, const QString &serial) co
 
 QString MainWindow::buildPrintTemplate(const QString &serial, const QString &mac) const
 {
-    QString tpl = printTemplateEdit_->toPlainText();
-    tpl.replace("{SERIAL}", serial);
-    tpl.replace("{MAC}", mac);
+    QString tpl = snMode_.printTemplate;
+    tpl.replace(QStringLiteral("{SERIAL}"), serial);
+    tpl.replace(QStringLiteral("{MAC}"), mac);
     return tpl;
 }
 
 bool MainWindow::printSerialLabel(const QString &serial, const QString &mac, QString &errMsg)
 {
     bool okPort = false;
-    const int port = printerPortEdit_->text().toInt(&okPort);
+    const int port = snMode_.printerPort.toInt(&okPort);
     if (!okPort || port <= 0 || port > 65535) {
-        errMsg = "Invalid printer port.";
+        errMsg = QStringLiteral("Invalid printer port.");
         return false;
     }
-    const QString ip = printerIpEdit_->text().trimmed();
+    const QString ip = snMode_.printerIp.trimmed();
     if (ip.isEmpty()) {
-        errMsg = "Printer IP is empty.";
+        errMsg = QStringLiteral("Printer IP is empty.");
         return false;
     }
 
     QTcpSocket sock;
     sock.connectToHost(ip, static_cast<quint16>(port));
     if (!sock.waitForConnected(1500)) {
-        errMsg = "Printer connect timeout/fail.";
+        errMsg = QStringLiteral("Printer connect timeout/fail.");
         return false;
     }
 
@@ -524,7 +565,7 @@ bool MainWindow::printSerialLabel(const QString &serial, const QString &mac, QSt
         payload.append('\n');
     }
     if (sock.write(payload) < 0 || !sock.waitForBytesWritten(1500)) {
-        errMsg = "Printer write failed.";
+        errMsg = QStringLiteral("Printer write failed.");
         sock.disconnectFromHost();
         return false;
     }
@@ -542,12 +583,13 @@ void MainWindow::onConnectClicked()
         return;
     }
 
+    transport_->configureInputPolling(cfg_.inReportId, cfg_.reportSize);
     QString err;
     if (!transport_->open(vid, pid, err)) {
-        appendLog("[ERR] " + err);
+        appendLog(QStringLiteral("[ERR] %1").arg(err));
         return;
     }
-    appendLog(QString("[INFO] HID connected VID=0x%1 PID=0x%2")
+    appendLog(QStringLiteral("[INFO] HID connected VID=0x%1 PID=0x%2")
                   .arg(vid, 4, 16, QChar('0'))
                   .arg(pid, 4, 16, QChar('0'))
                   .toUpper());
@@ -556,7 +598,7 @@ void MainWindow::onConnectClicked()
 void MainWindow::onDisconnectClicked()
 {
     transport_->close();
-    appendLog("[INFO] HID disconnected.");
+    appendLog(QStringLiteral("[INFO] HID disconnected."));
 }
 
 void MainWindow::onSendSingleClicked()
@@ -564,11 +606,11 @@ void MainWindow::onSendSingleClicked()
     QByteArray cmd;
     QString err;
     if (!race::RaceCommand::parseHexString(singleCmdEdit_->toPlainText(), cmd, err)) {
-        appendLog("[ERR] " + err);
+        appendLog(QStringLiteral("[ERR] %1").arg(err));
         return;
     }
     if (!raceService_->sendSingle(cmd, currentTarget(), err)) {
-        appendLog("[ERR] " + err);
+        appendLog(QStringLiteral("[ERR] %1").arg(err));
     }
 }
 
@@ -577,9 +619,9 @@ void MainWindow::onSendSequenceClicked()
     QString err;
     const QStringList lines = sequenceEdit_->toPlainText().split('\n');
     if (!raceService_->sendSequence(lines, currentTarget(), err)) {
-        appendLog("[ERR] " + err);
+        appendLog(QStringLiteral("[ERR] %1").arg(err));
     } else {
-        appendLog("[INFO] Sequence send completed.");
+        appendLog(QStringLiteral("[INFO] Sequence send completed."));
     }
 }
 
@@ -591,9 +633,10 @@ void MainWindow::onWriteNextSerialClicked()
         return;
     }
     if (!transport_->isOpen()) {
+        transport_->configureInputPolling(cfg_.inReportId, cfg_.reportSize);
         QString err;
         if (!transport_->open(vid, pid, err)) {
-            appendLog("[ERR] " + err);
+            appendLog(QStringLiteral("[ERR] %1").arg(err));
             return;
         }
     }
@@ -603,14 +646,14 @@ void MainWindow::onWriteNextSerialClicked()
 void MainWindow::onStartAutoSnClicked()
 {
     if (transport_->isOpen()) {
-        appendLog("[ERR] Disconnect manual HID session before auto SN mode.");
+        appendLog(QStringLiteral("[ERR] Disconnect manual HID session before auto SN mode."));
         return;
     }
 
     bool okPoll = false;
-    const int pollMs = snPollMsEdit_->text().toInt(&okPoll);
+    const int pollMs = snMode_.snPollMs.toInt(&okPoll);
     if (!okPoll || pollMs < 100) {
-        appendLog("[ERR] Auto poll must be >= 100 ms.");
+        appendLog(QStringLiteral("[ERR] Auto poll must be >= 100 ms (check Settings)."));
         return;
     }
 
@@ -628,7 +671,7 @@ void MainWindow::onStartAutoSnClicked()
 
     autoSnArmed_ = false;
     autoSnTimer_.start(pollMs);
-    appendLog(QString("[INFO] Auto SN started, polling every %1 ms.").arg(pollMs));
+    appendLog(QStringLiteral("[INFO] Auto SN started, polling every %1 ms.").arg(pollMs));
 }
 
 void MainWindow::onStopAutoSnClicked()
@@ -638,7 +681,7 @@ void MainWindow::onStopAutoSnClicked()
     if (transport_->isOpen()) {
         transport_->close();
     }
-    appendLog("[INFO] Auto SN stopped.");
+    appendLog(QStringLiteral("[INFO] Auto SN stopped."));
 }
 
 void MainWindow::onAutoSnTick()
@@ -653,7 +696,7 @@ void MainWindow::onAutoSnTick()
     const bool present = race::HidTransport::deviceExists(vid, pid);
     if (!present) {
         if (autoSnArmed_) {
-            appendLog("[INFO] Device removed, ready for next unit.");
+            appendLog(QStringLiteral("[INFO] Device removed, ready for next unit."));
             autoSnArmed_ = false;
         }
         if (transport_->isOpen()) {
@@ -666,15 +709,16 @@ void MainWindow::onAutoSnTick()
         return;
     }
 
+    transport_->configureInputPolling(cfg_.inReportId, cfg_.reportSize);
     QString err;
     if (!transport_->open(vid, pid, err)) {
-        appendLog("[ERR] Auto open failed: " + err);
+        appendLog(QStringLiteral("[ERR] Auto open failed: %1").arg(err));
         return;
     }
 
     if (writeCurrentSerialOnce()) {
-        autoSnArmed_ = true;  // Write once for current plugged device.
-        appendLog("[INFO] Auto write done, waiting for device removal.");
+        autoSnArmed_ = true;
+        appendLog(QStringLiteral("[INFO] Auto write done, waiting for device removal."));
     }
     transport_->close();
 }

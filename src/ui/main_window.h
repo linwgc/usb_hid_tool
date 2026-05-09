@@ -1,14 +1,15 @@
 #pragma once
 
 #include "core/race_packet.h"
+#include "ui/sn_mode_settings.h"
 
 #include <QMainWindow>
 #include <QTimer>
 
-class QCheckBox;
 class QComboBox;
 class QLineEdit;
 class QPlainTextEdit;
+class QLabel;
 class QPushButton;
 class QTextEdit;
 
@@ -33,6 +34,7 @@ private slots:
     void onStartAutoSnClicked();
     void onStopAutoSnClicked();
     void onAutoSnTick();
+    void onSnSettingsClicked();
 
 private:
     void setupUi();
@@ -40,6 +42,7 @@ private:
     quint8 currentTarget() const;
     bool parseUsbConfig(quint16 &vid, quint16 &pid);
     bool prepareSerialConfig(quint64 &start, int &width);
+    bool validateSerialRange(quint64 &start, int &width, QString *errMsg = nullptr);
     bool writeCurrentSerialOnce();
     QString buildSerialString(quint64 serialValue, int width, QString &errMsg) const;
     bool readMacAddress(QString &macString, QString &errMsg);
@@ -49,11 +52,14 @@ private:
     QString buildPrintTemplate(const QString &serial, const QString &mac) const;
     QString currentLogFilePath() const;
     QString currentCsvFilePath() const;
+    void updateSnModePreview();
+    void setSnLastResult(bool ok, const QString &detail);
 
     race::HidTransport *transport_ = nullptr;
     race::RaceService *raceService_ = nullptr;
     race::SerialNumberService *serialService_ = nullptr;
     race::HidReportConfig cfg_;
+    SnModeSettings snMode_;
 
     QLineEdit *vidEdit_ = nullptr;
     QLineEdit *pidEdit_ = nullptr;
@@ -62,26 +68,9 @@ private:
     QComboBox *targetCombo_ = nullptr;
     QPlainTextEdit *singleCmdEdit_ = nullptr;
     QPlainTextEdit *sequenceEdit_ = nullptr;
-    QLineEdit *snPrefixEdit_ = nullptr;
-    QLineEdit *snStartEdit_ = nullptr;
-    QLineEdit *snWidthEdit_ = nullptr;
-    QLineEdit *snPollMsEdit_ = nullptr;
-    QPlainTextEdit *snTemplateEdit_ = nullptr;
-    QCheckBox *usePlantCheck_ = nullptr;
-    QCheckBox *useManufacturerCheck_ = nullptr;
-    QCheckBox *useProductCheck_ = nullptr;
-    QCheckBox *useMonthCheck_ = nullptr;
-    QCheckBox *useYearCheck_ = nullptr;
-    QCheckBox *preventDuplicateCheck_ = nullptr;
-    QCheckBox *enablePrintCheck_ = nullptr;
-    QComboBox *plantCombo_ = nullptr;
-    QComboBox *manufacturerCombo_ = nullptr;
-    QComboBox *productCombo_ = nullptr;
-    QComboBox *monthCombo_ = nullptr;
-    QComboBox *yearCombo_ = nullptr;
-    QLineEdit *printerIpEdit_ = nullptr;
-    QLineEdit *printerPortEdit_ = nullptr;
-    QPlainTextEdit *printTemplateEdit_ = nullptr;
+    QPlainTextEdit *snPreviewEdit_ = nullptr;
+    QLabel *snSummaryLabel_ = nullptr;
+    QLabel *snLastResultLabel_ = nullptr;
     QTextEdit *logEdit_ = nullptr;
 
     quint64 nextSerial_ = 1;
