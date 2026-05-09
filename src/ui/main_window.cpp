@@ -53,7 +53,7 @@ void MainWindow::setupUi()
     auto *cfgGroup = new QGroupBox("USB HID Config", central);
     auto *cfgLayout = new QFormLayout(cfgGroup);
     vidEdit_ = new QLineEdit("0x0E8D", cfgGroup);
-    pidEdit_ = new QLineEdit("0x0003", cfgGroup);
+    pidEdit_ = new QLineEdit("0x0809", cfgGroup);
     outReportEdit_ = new QLineEdit("0x06", cfgGroup);
     inReportEdit_ = new QLineEdit("0x07", cfgGroup);
     cfgLayout->addRow("VID", vidEdit_);
